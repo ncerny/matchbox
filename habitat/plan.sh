@@ -8,7 +8,7 @@ pkg_shasum="aaf96b45f4f4886defce9eeefcfaec6ad31878ac0a9061b72390368d55fdba16"
 pkg_dirname=${pkg_name}-v${pkg_version}-linux-amd64
 pkg_deps=(core/glibc core/curl core/grep)
 # pkg_build_deps=(core/make core/gcc)
-pkg_bin_dirs=(bin scripts)
+pkg_bin_dirs=(bin)
 # pkg_exports=(
 #   [host]=srv.address
 #   [port]=srv.port
@@ -41,7 +41,7 @@ do_install() {
 
   mkdir -p $pkg_prefix/var
   for dir in cloud generic groups ignition profiles; do
-    cp -rf $PLAN_CONTEXT/../$dir $pkg_prefix/var/
+    cp -r $PLAN_CONTEXT/../$dir $pkg_prefix/var/
   done
 }
 
