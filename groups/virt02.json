@@ -8,7 +8,6 @@
   },
   "metadata": {
     "domain_name": "virt02.cerny.cc",
-    "fleet_metadata": "role=etcd,name=node2",
     "etcd_name": "node2",
     "etcd_initial_cluster": "node1=http://virt01.cerny.cc:2380,node2=http://virt02.cerny.cc:2380,node3=http://virt03.cerny.cc:2380",
     "ssh_authorized_keys": [

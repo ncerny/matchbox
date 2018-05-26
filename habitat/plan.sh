@@ -38,6 +38,11 @@ do_install() {
   for dir in contrib docs examples scripts; do
     cp -r $HAB_CACHE_SRC_PATH/$pkg_dirname/$dir $pkg_prefix/
   done
+
+  mkdir -p $pkg_prefix/var
+  for dir in cloud generic groups ignition profiles; do
+    cp -rf $PLAN_CONTEXT/../$dir $pkg_prefix/var/
+  done
 }
 
 do_strip() {

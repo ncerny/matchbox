@@ -21,6 +21,59 @@ systemd:
           contents: |
             [Service]
             Environment="REBOOT_STRATEGY=etcd-lock"
+    - name: flanneld.service
+      dropins:
+        - name: 50-network-config.conf
+          contents: |
+            [Service]
+            ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.1.0.0/16" }'
+flannel:
+  interface: bond1
+locksmith:
+  reboot_strategy: "etcd-lock"
+networkd:
+  units:
+    - name: 00-bond0-slaves.network
+      contents: |
+        [Match]
+        Driver=bnx2
+        Driver=igb
+        Driver=e1000*
+        [Network]
+        Bond=bond0
+    - name: 00-bond1-slaves.network
+      contents: |
+        [Match]
+        Driver=mlx4*
+        Driver=ixgbe
+        [Network]
+        Bond=bond1
+        [Link]
+        MTUBytes=9000
+    - name: 10-bond0.netdev
+      contents: |
+        [NetDev]
+        Name=bond0
+        Kind=bond
+    - name: 10-bond1.netdev
+      contents: |
+        [NetDev]
+        Name=bond1
+        Kind=bond
+    - name: 20-bond0.network
+      contents: |
+        [Match]
+        Name=bond0
+        [Network]
+        DHCP=true
+    - name: 20-bond1.network
+      contents: |
+        [Match]
+        Name=bond1
+        [Network]
+        DHCP=true
+        [Link]
+        MTUBytes=9000
 
 {{ if index . "ssh_authorized_keys" }}
 passwd:
