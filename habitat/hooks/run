@@ -7,8 +7,4 @@ cd "{{pkg.svc_path}}"
 exec matchbox \
   -address="0.0.0.0:8080" \
   -data-path="{{pkg.path}}/var" \
-  -asset-path="{{pkg.svc_var_path}}" \
-  -rpc-address="0.0.0.0:8081" \
-  -cert-file="" \
-  -key-file="" \
-  -ca-file=""
+  -asset-path="{{pkg.svc_var_path}}"
