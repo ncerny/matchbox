@@ -9,12 +9,11 @@ pkg_dirname=${pkg_name}-v${pkg_version}-linux-amd64
 pkg_deps=(core/glibc core/curl core/grep)
 # pkg_build_deps=(core/make core/gcc)
 pkg_bin_dirs=(bin)
-# pkg_exports=(
-#   [host]=srv.address
-#   [port]=srv.port
-#   [ssl-port]=srv.ssl.port
-# )
-# pkg_exposes=(port ssl-port)
+pkg_exports=(
+  [port]=port
+  [grpc]=grpc
+)
+pkg_exposes=(port grpc)
 # pkg_binds=(
 #   [database]="port host"
 # )

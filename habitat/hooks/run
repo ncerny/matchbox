@@ -5,6 +5,6 @@ exec &2>1
 cd "{{pkg.svc_path}}"
 
 exec matchbox \
-  -address="0.0.0.0:8080" \
+  -address="0.0.0.0:{{cfg.port}}" \
   -data-path="{{pkg.path}}/var" \
   -asset-path="{{pkg.svc_var_path}}"
