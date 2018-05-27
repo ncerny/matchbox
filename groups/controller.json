@@ -1,14 +1,11 @@
 {
-  "id": "virt02",
-  "name": "Virtualization Node",
-  "profile": "virt",
+  "id": "controller",
+  "name": "Virtualization Controller",
+  "profile": "controller",
   "selector": {
-    "uuid": "4C4C4544-0038-4710-8036-C6C04F395231",
-    "os": "installed"
+    "type": "controller"
   },
   "metadata": {
-    "domain_name": "virt02.cerny.cc",
-    "etcd_name": "node2",
     "etcd_initial_cluster": "node1=http://virt01.cerny.cc:2380,node2=http://virt02.cerny.cc:2380,node3=http://virt03.cerny.cc:2380",
     "ssh_authorized_keys": [
       "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC8U3NdHJtjLwA9/a7iVEhd01xgR+8tSUqu1X68uQx5u7XWIpENYK2ksHBu6eYQHUdoH/otgJ2XnzrZcfTP83dUNN9KFxuYOmiYHRtFJ1qDNs0miWLYC1nTpZTeYT4t1tosKWln1bZxX76sxG95QSlZNaAEYRkam0+3G+6jHiZBtJcfYwqa0mny7LekWGypfynNbKwL5Vq0lHH5eA6VvP/I/Ev7LPTvmoiK7QQZXbHjOckdQGOAqJP6KBoDFUEmxeGGy7RCzjYpom43P5S/mxK5TRVMekDuEi55/78wheHfXMfsJe73q6gH4wIy2QLiS5YHk0/7jJHosNC7wIUYHhK5",
