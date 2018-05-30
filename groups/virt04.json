@@ -10,7 +10,7 @@
     "controller": false,
     "bond0_ipv4": "192.168.20.34",
     "bond1_ipv4": "172.16.20.34",
-    "etcd_initial_cluster": "node1=http://virt01.cerny.cc:2380,node2=http://virt02.cerny.cc:2380,node3=http://virt03.cerny.cc:2380",
+    "etcd_endpoints": "virt01.cerny.cc:2379,virt02.cerny.cc:2379,virt03.cerny.cc:2379",
     "ssh_authorized_keys": [
       "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC8U3NdHJtjLwA9/a7iVEhd01xgR+8tSUqu1X68uQx5u7XWIpENYK2ksHBu6eYQHUdoH/otgJ2XnzrZcfTP83dUNN9KFxuYOmiYHRtFJ1qDNs0miWLYC1nTpZTeYT4t1tosKWln1bZxX76sxG95QSlZNaAEYRkam0+3G+6jHiZBtJcfYwqa0mny7LekWGypfynNbKwL5Vq0lHH5eA6VvP/I/Ev7LPTvmoiK7QQZXbHjOckdQGOAqJP6KBoDFUEmxeGGy7RCzjYpom43P5S/mxK5TRVMekDuEi55/78wheHfXMfsJe73q6gH4wIy2QLiS5YHk0/7jJHosNC7wIUYHhK5",
       "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDdPwWI9X8VF5CDOAvfgvJfvmY4brd80Gc49jZbxF0H1NK3wBff/+mi5JRIQG6VjSY/TO+VLE2OjP7I8CPrwGVmqNI4GLDr7Wwc2WZ8ZAgYnTDXJ+pBkmMmOit+NOlQVd+XtSHw3kjJub4UJGcyLnAPUrRzCQNZlxRuVUku7h7FlnEWVKWnwvebzfvkaPHUa3WEPid4lHKUhCkHbvJ6PD7KlNwBzVpakkyn5DlY2zMK53d/AOJO3OKa2KydPBTo4B2XoxiDdGRoEY59GQxeIiEdIcDNSI3vZ07cSv4Lfb5KpIeQI3JoiUMy87sEdj1so1Y4Ld64EeJW46jyKTVyhcYL"

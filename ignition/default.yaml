@@ -5,25 +5,24 @@ systemd:
       enable: true
       dropins:
         - name: 40-etcd-cluster.conf
-          {{ if .controller }}
           contents: |
+            {{ if ".controller" }}
             [Service]
             Environment="ETCD_IMAGE_TAG=v3.2.0"
             Environment="ETCD_NAME={{.etcd_name}}"
             Environment="ETCD_ADVERTISE_CLIENT_URLS=http://{{.hostname}}:2379"
-            Environment="ETCD_INITIAL_ADVERTISE_PEER_URLS=http://{{.hostname}}.cerny.cc:2380"
+            Environment="ETCD_INITIAL_ADVERTISE_PEER_URLS=http://{{.hostname}}:2380"
             Environment="ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379"
             Environment="ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380"
             Environment="ETCD_INITIAL_CLUSTER={{.etcd_initial_cluster}}"
             Environment="ETCD_STRICT_RECONFIG_CHECK=true"
-          {{ else }}
-          contents: |
+            {{ else }}
             [Service]
             Environment="ETCD_IMAGE_TAG=v3.2.0"
             ExecStart=/usr/lib/coreos/etcd-wrapper gateway start \
               --listen-addr=127.0.0.1:2379 \
               --endpoints={{.etcd_endpoints}}
-          {{ end }}
+            {{ end }}
     - name: flanneld.service
       dropins:
         - name: 50-network-config.conf
