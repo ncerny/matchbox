@@ -42,16 +42,16 @@ systemd:
         WantedBy=multi-user.target
     - name: hab-sup.service
       enable: true
-        contents: |
-          [Unit]
-          Description = The Habitat Supervisor
-          [Service]
-          ExecStart = /opt/bin/hab sup run --peer 192.168.2.2 --peer 192.168.2.3 --auto-update
-          Restart = on-failure
-          Delegate = yes
-          KillMode = process
-          [Install]
-          WantedBy = default.target
+      contents: |
+        [Unit]
+        Description=The Habitat Supervisor
+        [Service]
+        ExecStart=/opt/bin/hab sup run --peer 192.168.2.2 --peer 192.168.2.3 --auto-update
+        Restart=on-failure
+        Delegate=yes
+        KillMode=process
+        [Install]
+        WantedBy=default.target
 storage:
   files:
     - path: /opt/hab-installer
