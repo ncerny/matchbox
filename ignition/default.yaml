@@ -5,7 +5,7 @@ systemd:
       enable: true
       dropins:
         - name: 40-etcd-cluster.conf
-          {{ if controller }}
+          {{ if .controller }}
           contents: |
             [Service]
             Environment="ETCD_IMAGE_TAG=v3.2.0"
