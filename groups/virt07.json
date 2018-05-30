@@ -7,7 +7,6 @@
   "profile": "default",
   "metadata": {
     "hostname": "virt07.cerny.cc",
-    "controller": false,
     "bond0_ipv4": "192.168.20.37",
     "bond1_ipv4": "172.16.20.37",
     "etcd_endpoints": "virt01.cerny.cc:2379,virt02.cerny.cc:2379,virt03.cerny.cc:2379",
