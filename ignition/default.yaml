@@ -9,7 +9,7 @@ systemd:
           contents: |
             [Service]
             Environment="ETCD_IMAGE_TAG=v3.2.0"
-            Environment="ETCD_NAME={{.etc_name}}"
+            Environment="ETCD_NAME={{.etcd_name}}"
             Environment="ETCD_ADVERTISE_CLIENT_URLS=http://{{.hostname}}:2379"
             Environment="ETCD_INITIAL_ADVERTISE_PEER_URLS=http://{{.hostname}}.cerny.cc:2380"
             Environment="ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379"
