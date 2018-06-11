@@ -46,7 +46,7 @@ systemd:
         [Unit]
         Description=The Habitat Supervisor
         [Service]
-        ExecStart=/opt/bin/hab sup run --peer 192.168.2.2 --peer 192.168.2.3 --auto-update
+        ExecStart=/opt/bin/hab sup run --peer 192.168.2.11 --peer 192.168.2.12 --auto-update
         Restart=on-failure
         Delegate=yes
         KillMode=process
@@ -61,7 +61,8 @@ storage:
         inline: |
           #!/bin/bash -ex
           if [ ! -f "/opt/bin/hab" ]; then
-            curl --retry 10 --fail https://api.bintray.com/content/habitat/stable/linux/x86_64/hab-%24latest-x86_64-linux.tar.gz?bt_package=hab-x86_64-linux -o /tmp/hab.tar.gz
+            curl 'https://api.bintray.com/content/habitat/stable/linux/x86_64/hab-%24latest-x86_64-linux.tar.gz?bt_package=hab-x86_64-linux' > /tmp/hab.tar.gz
+            mkdir /opt/bin
             tar -xvzf /tmp/hab.tar.gz -C /opt/bin
             chmod +x /opt/bin/hab
           fi
@@ -111,18 +112,13 @@ networkd:
         [Match]
         Name=bond0
         [Network]
-        DHCP=false
-        Address={{.bond0_ipv4}}/24
-        Gateway=192.168.20.1
-        DNS=192.168.2.2
-        DNS=192.168.2.3
+        DHCP=true
     - name: 20-bond1.network
       contents: |
         [Match]
         Name=bond1
         [Network]
         DHCP=false
-        Address={{.bond1_ipv4}}/24
         [Link]
         MTUBytes=9000
 

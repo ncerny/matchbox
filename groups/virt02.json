@@ -2,7 +2,7 @@
   "id": "virt02",
   "name": "Virtualization Node",
   "selector":{
-    "n": "virt02"
+    "hostname": "virt02.cerny.cc"
   },
   "profile": "default",
   "metadata": {

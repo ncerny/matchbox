@@ -2,5 +2,5 @@
 # See the docs at https://www.habitat.sh/docs/create-packages-configure/.
 # You can safely delete this file if you don't need it.
 
-port=8080
-grpc=8081
+port=9080
+grpc=9081
