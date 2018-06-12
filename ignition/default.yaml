@@ -1,45 +1,21 @@
 ---
 systemd:
   units:
-    - name: etcd-member.service
-      enable: true
-      dropins:
-        - name: 40-etcd-cluster.conf
-          contents: |
-            {{ if ".controller" }}
-            [Service]
-            Environment="ETCD_IMAGE_TAG=v3.2.0"
-            Environment="ETCD_NAME={{.etcd_name}}"
-            Environment="ETCD_ADVERTISE_CLIENT_URLS=http://{{.hostname}}:2379"
-            Environment="ETCD_INITIAL_ADVERTISE_PEER_URLS=http://{{.hostname}}:2380"
-            Environment="ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379"
-            Environment="ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380"
-            Environment="ETCD_INITIAL_CLUSTER={{.etcd_initial_cluster}}"
-            Environment="ETCD_STRICT_RECONFIG_CHECK=true"
-            {{ else }}
-            [Service]
-            Environment="ETCD_IMAGE_TAG=v3.2.0"
-            ExecStart=/usr/lib/coreos/etcd-wrapper gateway start \
-              --listen-addr=127.0.0.1:2379 \
-              --endpoints={{.etcd_endpoints}}
-            {{ end }}
-    - name: flanneld.service
-      dropins:
-        - name: 50-network-config.conf
-          contents: |
-            [Service]
-            ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.1.0.0/16" }'
-    - name: hab-installer.service
+    - name: hab-extract.path
       enable: true
       contents: |
         [Unit]
-        Requires=network-online.target
-        After=network-online.target
-        [Service]
-        Type=oneshot
-        ExecStart=/opt/hab-installer
+        Description=Extract Habitat CLI
+        [Path]
+        PathExists=/opt/bin/hab.tar.gz
         [Install]
-        WantedBy=multi-user.target
+        WantedBy=default.target
+    - name: hab-extract.service
+      contents: |
+        [Unit]
+        Description=Extract Habitat CLI
+        [Service]
+        ExecStart=/usr/bin/tar xzf /opt/bin/hab.tar.gz -C /opt/bin --strip-components=1
     - name: hab-sup.service
       enable: true
       contents: |
@@ -54,30 +30,36 @@ systemd:
         WantedBy=default.target
 storage:
   files:
-    - path: /opt/hab-installer
+    - path: /opt/bin/hab.tar.gz
       filesystem: root
-      mode: 0500
       contents:
-        inline: |
-          #!/bin/bash -ex
-          if [ ! -f "/opt/bin/hab" ]; then
-            curl 'https://api.bintray.com/content/habitat/stable/linux/x86_64/hab-%24latest-x86_64-linux.tar.gz?bt_package=hab-x86_64-linux' > /tmp/hab.tar.gz
-            mkdir /opt/bin
-            tar -xvzf /tmp/hab.tar.gz -C /opt/bin
-            chmod +x /opt/bin/hab
-          fi
+        remote:
+          url: https://api.bintray.com/content/habitat/stable/linux/x86_64/hab-%24latest-x86_64-linux.tar.gz?bt_package=hab-x86_64-linux
     - path: /etc/hostname
       filesystem: root
       mode: 0644
       contents:
         inline:
           {{.hostname}}
+{{ if index . "controller" }}
+etcd:
+  version: "3.2.13"
+  advertise_client_urls: http://{{.hostname}}:2379
+  initial_advertise_peer_urls: http://{{.hostname}}:2380
+  listen_client_urls: http://0.0.0.0:2379
+  listen_peer_urls: http://0.0.0.0:2380
+  initial_cluster: {{.etcd_initial_cluster}}
+  name: ((.etcd_name))
+{{ end }}
 flannel:
   interface: bond1
+  etcd_endpoints: {{.etcd_endpoints}}
+  network_config: '{ "Network": "10.1.0.0/16" }'
 update:
   group: stable
 locksmith:
   reboot_strategy: etcd-lock
+  etcd_endpoints: {{.etcd_endpoints}}
 networkd:
   units:
     - name: 00-bond0-slaves.network
@@ -112,13 +94,17 @@ networkd:
         [Match]
         Name=bond0
         [Network]
-        DHCP=true
+        DHCP=false
+        Address={{.bond0_ipv4}}/24
+        Gateway=192.168.20.1
+        DNS=192.168.2.10
     - name: 20-bond1.network
       contents: |
         [Match]
         Name=bond1
         [Network]
         DHCP=false
+        Address={{.bond1_ipv4}}/24
         [Link]
         MTUBytes=9000
 
