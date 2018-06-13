@@ -15,7 +15,7 @@ systemd:
         [Unit]
         Description=Extract Habitat CLI
         [Service]
-        ExecStart=/usr/bin/tar xzf /opt/bin/hab.tar.gz -C /opt/bin --strip-components=1
+        ExecStart=/usr/bin/sh -c '/usr/bin/tar xzf /opt/bin/hab.tar.gz -C /opt/bin --strip-components=1 && /usr/bin/rm /opt/bin/hab.tar.gz'
     - name: hab-sup.service
       enable: true
       contents: |
@@ -28,38 +28,111 @@ systemd:
         KillMode=process
         [Install]
         WantedBy=default.target
+    {{ if index . "controller" }}
+    - name: dnsmasq.service
+      enable: true
+      contents: |
+        [Unit]
+        Description=dnsmasq providing DHCP proxy services for PXE boot.
+        [Service]
+        ExecStartPre=-/usr/bin/docker rm dnsmasq
+        ExecStart=/usr/bin/docker run --cap-add=NET_ADMIN --net=host quay.io/coreos/dnsmasq \
+          -d -q \
+          --dhcp-range=192.168.20.1,proxy,255.255.255.0 \
+          --enable-tftp --tftp-root=/var/lib/tftpboot \
+          --dhcp-userclass=set:ipxe,iPXE \
+          --pxe-service=tag:#ipxe,x86PC,"PXE chainload to iPXE",undionly.kpxe \
+          --pxe-service=tag:ipxe,x86PC,"iPXE",http://infra.home.cerny.cc:9080/boot.ipxe \
+          --log-queries \
+          --log-dhcp
+        [Install]
+        WantedBy=default.target
+    {{ end }}
 storage:
   files:
     - path: /opt/bin/hab.tar.gz
       filesystem: root
+      mode: 0400
       contents:
         remote:
           url: https://api.bintray.com/content/habitat/stable/linux/x86_64/hab-%24latest-x86_64-linux.tar.gz?bt_package=hab-x86_64-linux
+    - path: /opt/bin/ceph
+      filesystem: root
+      mode: 0755
+      contents:
+        inline:
+          #!/bin/bash
+          /usr/bin/docker run --rm -v /etc/ceph:/etc/ceph ceph/daemon-base ceph "$@"
+    - path: /opt/bin/ceph-disk
+      filesystem: root
+      mode: 0755
+      contents:
+        inline:
+          #!/bin/bash
+          /usr/bin/docker run --rm -v /etc/ceph:/etc/ceph ceph/daemon-base ceph-disk "$@"
+    - path: /opt/bin/rados
+      filesystem: root
+      mode: 0755
+      contents:
+        inline:
+          #!/bin/bash
+          /usr/bin/docker run --rm -v /etc/ceph:/etc/ceph ceph/daemon-base rados "$@"
+    - path: /opt/bin/rbd
+      filesystem: root
+      mode: 0755
+      contents:
+        inline:
+          #!/bin/bash
+          /usr/bin/docker run --rm -v /etc/ceph:/etc/ceph ceph/daemon-base rbd "$@"
     - path: /etc/hostname
       filesystem: root
       mode: 0644
       contents:
         inline:
           {{.hostname}}
+    - path: /hab/user/kubelet/config/user.toml
+      filesystem: root
+      mode: 0644
+      contents:
+        inline:
+          controller = kubernetes.cerny.cc
+    - path: /hab/sup/default/specs/kubelet.spec
+      filesystem: root
+      mode: 0644
+      user:
+        name: root
+      group:
+        name: root
+      contents:
+        inline:
+          ident = "ncerny/kubelet"
+          group = "default"
+          bldr_url = "https://bldr.habitat.sh"
+          channel = "stable"
+          topology = "leader"
+          update_strategy = "rolling"
+          binds = []
+          binding_mode = "strict"
+          desired_state = "up"
 {{ if index . "controller" }}
 etcd:
   version: "3.2.13"
-  advertise_client_urls: http://{{.hostname}}:2379
-  initial_advertise_peer_urls: http://{{.hostname}}:2380
-  listen_client_urls: http://0.0.0.0:2379
-  listen_peer_urls: http://0.0.0.0:2380
+  advertise_client_urls: http://{{.bond1_ipv4}}:2379
+  initial_advertise_peer_urls: http://{{.bond1_ipv4}}:2380
+  listen_client_urls: http://{{.bond1_ipv4}}:2379
+  listen_peer_urls: http://{{.bond1_ipv4}}:2380
   initial_cluster: {{.etcd_initial_cluster}}
   name: ((.etcd_name))
 {{ end }}
 flannel:
   interface: bond1
-  etcd_endpoints: {{.etcd_endpoints}}
+  etcd_endpoints: http://172.16.20.31:2379,http://172.16.20.32:2379,http://172.16.20.33:2379
   network_config: '{ "Network": "10.1.0.0/16" }'
 update:
   group: stable
 locksmith:
   reboot_strategy: etcd-lock
-  etcd_endpoints: {{.etcd_endpoints}}
+  etcd_endpoints: http://172.16.20.31:2379,http://172.16.20.32:2379,http://172.16.20.33:2379
 networkd:
   units:
     - name: 00-bond0-slaves.network
@@ -84,11 +157,19 @@ networkd:
         [NetDev]
         Name=bond0
         Kind=bond
+        [Bond]
+        Mode=balance-rr
+        TransmitHashPolicy=layer2+3
+        MIIMonitorSec=100
     - name: 10-bond1.netdev
       contents: |
         [NetDev]
         Name=bond1
         Kind=bond
+        [Bond]
+        Mode=balance-rr
+        TransmitHashPolicy=layer2+3
+        MIIMonitorSec=100
     - name: 20-bond0.network
       contents: |
         [Match]
