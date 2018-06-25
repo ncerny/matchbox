@@ -1,6 +1,7 @@
 ---
 systemd:
   units:
+    {{ if index . "controller" }}
     - name: hab-extract.path
       enable: true
       contents: |
@@ -9,7 +10,7 @@ systemd:
         [Path]
         PathExists=/opt/bin/hab.tar.gz
         [Install]
-        WantedBy=default.target
+        WantedBy=multi-user.target
     - name: hab-extract.service
       contents: |
         [Unit]
@@ -22,40 +23,210 @@ systemd:
         [Unit]
         Description=The Habitat Supervisor
         [Service]
-        ExecStart=/opt/bin/hab sup run --peer 192.168.2.11 --peer 192.168.2.12 --auto-update
+        ExecStart=/opt/bin/hab sup run --permanent-peer --peer 192.168.20.31 --peer 192.168.20.32 --peer 192.168.20.33 --auto-update
         Restart=on-failure
         Delegate=yes
         KillMode=process
         [Install]
-        WantedBy=default.target
-    {{ if index . "controller" }}
-    - name: dnsmasq.service
+        WantedBy=multi-user.target
+    - name: kube-apiserver.service
       enable: true
       contents: |
         [Unit]
-        Description=dnsmasq providing DHCP proxy services for PXE boot.
+        Description=Kubernetes API Server
+        Documentation=https://github.com/kubernetes/kubernetes
         [Service]
-        ExecStartPre=-/usr/bin/docker rm dnsmasq
-        ExecStart=/usr/bin/docker run --cap-add=NET_ADMIN --net=host quay.io/coreos/dnsmasq \
-          -d -q \
-          --dhcp-range=192.168.20.1,proxy,255.255.255.0 \
-          --enable-tftp --tftp-root=/var/lib/tftpboot \
-          --dhcp-userclass=set:ipxe,iPXE \
-          --pxe-service=tag:#ipxe,x86PC,"PXE chainload to iPXE",undionly.kpxe \
-          --pxe-service=tag:ipxe,x86PC,"iPXE",http://infra.home.cerny.cc:9080/boot.ipxe \
-          --log-queries \
-          --log-dhcp
+        ExecStart=/opt/bin/kube-apiserver \
+         --advertise-address={{.bond1_ipv4}} \
+         --allow-privileged=true \
+         --apiserver-count=3 \
+         --audit-log-maxage=30 \
+         --audit-log-maxbackup=3 \
+         --audit-log-maxsize=100 \
+         --audit-log-path=/var/log/audit.log \
+         --authorization-mode=Node,RBAC \
+         --bind-address=0.0.0.0 \
+         --client-ca-file=/var/lib/kubernetes/ca.pem \
+         --enable-admission-plugins=Initializers,NamespaceLifecycle,NodeRestriction,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota \
+         --enable-swagger-ui=true \
+         --etcd-servers=http://172.16.20.31:2379,http://172.16.20.32:2379,http://172.16.20.33:2379 \
+         --event-ttl=1h \
+         --experimental-encryption-provider-config=/var/lib/kubernetes/encryption-config.yaml \
+         --kubelet-certificate-authority=/var/lib/kubernetes/ca.pem \
+         --kubelet-client-certificate=/var/lib/kubernetes/kubernetes.pem \
+         --kubelet-client-key=/var/lib/kubernetes/kubernetes-key.pem \
+         --kubelet-https=true \
+         --runtime-config=api/all \
+         --service-account-key-file=/var/lib/kubernetes/service-account.pem \
+         --service-cluster-ip-range=10.32.0.0/24 \
+         --service-node-port-range=30000-32767 \
+         --tls-cert-file=/var/lib/kubernetes/kubernetes.pem \
+         --tls-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \
+         --v=2
+        Restart=on-failure
+        RestartSec=5
         [Install]
-        WantedBy=default.target
+        WantedBy=multi-user.target
+    - name: kube-controller-manager.service
+      enable: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Controller Manager
+        Documentation=https://github.com/kubernetes/kubernetes
+        [Service]
+        ExecStart=/opt/bin/kube-controller-manager \
+          --address=0.0.0.0 \
+          --allocate-node-cidrs=true \
+          --cluster-cidr=10.200.0.0/16 \
+          --cluster-name=kubernetes \
+          --cluster-signing-cert-file=/var/lib/kubernetes/ca.pem \
+          --cluster-signing-key-file=/var/lib/kubernetes/ca-key.pem \
+          --kubeconfig=/var/lib/kubernetes/kube-controller-manager.kubeconfig \
+          --leader-elect=true \
+          --root-ca-file=/var/lib/kubernetes/ca.pem \
+          --service-account-private-key-file=/var/lib/kubernetes/service-account-key.pem \
+          --service-cluster-ip-range=10.32.0.0/24 \
+          --use-service-account-credentials=true \
+          --v=2
+        Restart=on-failure
+        RestartSec=5
+        [Install]
+        WantedBy=multi-user.target
+    - name: kube-scheduler.service
+      enable: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Scheduler
+        Documentation=https://github.com/kubernetes/kubernetes
+        [Service]
+        ExecStart=/opt/bin/kube-scheduler \
+          --config=/var/lib/kubernetes/kube-scheduler-config.yaml \
+          --v=2
+        Restart=on-failure
+        RestartSec=5
+        [Install]
+        WantedBy=multi-user.target
     {{ end }}
+    - name: kube-router.service
+      enable: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Router
+        After=kube-apiserver.service
+        [Service]
+        ExecStart=/opt/bin/kube-router --kubeconfig=/var/lib/kubernetes/kube-router.kubeconfig --run-firewall=true --run-service-proxy=true --run-router=true
+        Restart=on-failure
+        [Install]
+        WantedBy=multi-user.target
+    - name: kubelet.service
+      enable: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Kubelet
+        Documentation=https://github.com/kubernetes/kubernetes
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        ExecStart=/opt/bin/kubelet \
+          --config=/var/lib/kubelet/kubelet-config.yaml \
+          --container-runtime=docker \
+          --image-pull-progress-deadline=2m \
+          --kubeconfig=/var/lib/kubelet/kubeconfig \
+          --network-plugin=cni \
+          --register-node=true \
+          --v=2
+        Restart=on-failure
+        RestartSec=5
+        [Install]
+        WantedBy=multi-user.target
 storage:
   files:
+    - path: /etc/hostname
+      filesystem: root
+      mode: 0644
+      contents:
+        inline:
+          {{.hostname}}
+    {{ if index . "controller" }}
     - path: /opt/bin/hab.tar.gz
       filesystem: root
       mode: 0400
       contents:
         remote:
           url: https://api.bintray.com/content/habitat/stable/linux/x86_64/hab-%24latest-x86_64-linux.tar.gz?bt_package=hab-x86_64-linux
+    - path: /opt/bin/kube-apiserver
+      filesyste: root
+      mode: 0755
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/bin/kube-apiserver
+    - path: /opt/bin/kube-controller-manager
+      filesyste: root
+      mode: 0755
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/bin/kube-controller-manager
+    - path: /opt/bin/kube-scheduler
+      filesyste: root
+      mode: 0755
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/bin/kube-scheduler
+    - path: /var/lib/kubernetes/ca-key.pem
+      filesystem: root
+      mode: 0600
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/ca-key.pem
+    - path: /var/lib/kubernetes/kubernetes.pem
+      filesystem: root
+      mode: 0600
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/kubernetes.pem
+    - path: /var/lib/kubernetes/kubernetes-key.pem
+      filesystem: root
+      mode: 0600
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/kubernetes-key.pem
+    - path: /var/lib/kubernetes/kube-controller-manager.kubeconfig
+      filesystem: root
+      mode: 0644
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/kube-controller-manager.kubeconfig
+    - path: /var/lib/kubernetes/kube-scheduler.kubeconfig
+      filesystem: root
+      mode: 0644
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/kube-scheduler.kubeconfig
+    - path: /var/lib/kubernetes/service-account.pem
+      filesystem: root
+      mode: 0644
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/service-account.pem
+    - path: /var/lib/kubernetes/service-account-key.pem
+      filesystem: root
+      mode: 0644
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/service-account-key.pem
+    - path: /var/lib/kubernetes/encryption-config.yaml
+      filesystem: root
+      mode: 0644
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/encryption-config.yaml
+    - path: /var/lib/kubernetes/kube-scheduler-config.yaml
+    filesystem: root
+    mode: 0644
+    contents:
+      remote:
+        url: http://infra.home.cerny.cc/kubernetes/kube-scheduler-config.yaml
+    {{ end }}
     - path: /opt/bin/ceph
       filesystem: root
       mode: 0755
@@ -84,39 +255,57 @@ storage:
         inline:
           #!/bin/bash
           /usr/bin/docker run --rm -v /etc/ceph:/etc/ceph ceph/daemon-base rbd "$@"
-    - path: /etc/hostname
+    - path: /opt/bin/kubectl
+      filesystem: root
+      mode: 0755
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/bin/kubectl
+    - path: /opt/bin/kube-router
+      filesystem: root
+      mode: 0400
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/bin/kube-router
+    - path: /var/lib/kubernetes/ca.pem
+      filesystem: root
+      mode: 0600
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/ca.pem
+    - path: /var/lib/kubernetes/kubelet.pem
+      filesystem: root
+      mode: 0600
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/{{.hostname}}.pem
+    - path: /var/lib/kubernetes/kubelet-key.pem
+      filesystem: root
+      mode: 0600
+      contents:
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/{{.hostname}}-key.pem
+    - path: /var/lib/kubelet/kubeconfig
       filesystem: root
       mode: 0644
       contents:
-        inline:
-          {{.hostname}}
-    - path: /hab/user/kubelet/config/user.toml
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/{{.hostname}}.kubeconfig
+    - path: /var/lib/kubernetes/kube-router.kubeconfig
       filesystem: root
       mode: 0644
       contents:
-        inline:
-          controller = kubernetes.cerny.cc
-    - path: /hab/sup/default/specs/kubelet.spec
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/kube-proxy.kubeconfig
+    - path: /var/lib/kubelet/kubelet-config.yaml
       filesystem: root
       mode: 0644
-      user:
-        name: root
-      group:
-        name: root
       contents:
-        inline:
-          ident = "ncerny/kubelet"
-          group = "default"
-          bldr_url = "https://bldr.habitat.sh"
-          channel = "stable"
-          topology = "leader"
-          update_strategy = "rolling"
-          binds = []
-          binding_mode = "strict"
-          desired_state = "up"
+        remote:
+          url: http://infra.home.cerny.cc/kubernetes/kubelet-config.yaml
 {{ if index . "controller" }}
 etcd:
-  version: "3.2.13"
+  version: "3.3.8"
   advertise_client_urls: http://{{.bond1_ipv4}}:2379
   initial_advertise_peer_urls: http://{{.bond1_ipv4}}:2380
   listen_client_urls: http://{{.bond1_ipv4}}:2379
@@ -124,10 +313,6 @@ etcd:
   initial_cluster: {{.etcd_initial_cluster}}
   name: ((.etcd_name))
 {{ end }}
-flannel:
-  interface: bond1
-  etcd_endpoints: http://172.16.20.31:2379,http://172.16.20.32:2379,http://172.16.20.33:2379
-  network_config: '{ "Network": "10.1.0.0/16" }'
 update:
   group: stable
 locksmith:
@@ -189,12 +374,16 @@ networkd:
         [Link]
         MTUBytes=9000
 
-{{ if index . "ssh_authorized_keys" }}
 passwd:
   users:
+    - name: hab
+      primary_group: hab
+      home_dir: /hab
+      shell: /sbin/nologin
+    {{ if index . "ssh_authorized_keys" }}
     - name: core
       ssh_authorized_keys:
         {{ range $element := .ssh_authorized_keys }}
         - {{$element}}
         {{end}}
-{{end}}
+    {{end}}
