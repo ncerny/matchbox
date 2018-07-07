@@ -29,116 +29,18 @@ systemd:
         KillMode=process
         [Install]
         WantedBy=multi-user.target
-    - name: kube-apiserver.service
-      enable: true
-      contents: |
-        [Unit]
-        Description=Kubernetes API Server
-        Documentation=https://github.com/kubernetes/kubernetes
-        [Service]
-        ExecStart=/opt/bin/kube-apiserver \
-         --advertise-address={{.bond1_ipv4}} \
-         --allow-privileged=true \
-         --apiserver-count=3 \
-         --audit-log-maxage=30 \
-         --audit-log-maxbackup=3 \
-         --audit-log-maxsize=100 \
-         --audit-log-path=/var/log/audit.log \
-         --authorization-mode=Node,RBAC \
-         --bind-address=0.0.0.0 \
-         --client-ca-file=/var/lib/kubernetes/ca.pem \
-         --enable-admission-plugins=Initializers,NamespaceLifecycle,NodeRestriction,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota \
-         --enable-swagger-ui=true \
-         --etcd-servers=http://172.16.20.31:2379,http://172.16.20.32:2379,http://172.16.20.33:2379 \
-         --event-ttl=1h \
-         --experimental-encryption-provider-config=/var/lib/kubernetes/encryption-config.yaml \
-         --kubelet-certificate-authority=/var/lib/kubernetes/ca.pem \
-         --kubelet-client-certificate=/var/lib/kubernetes/kubernetes.pem \
-         --kubelet-client-key=/var/lib/kubernetes/kubernetes-key.pem \
-         --kubelet-https=true \
-         --runtime-config=api/all \
-         --service-account-key-file=/var/lib/kubernetes/service-account.pem \
-         --service-cluster-ip-range=10.32.0.0/24 \
-         --service-node-port-range=30000-32767 \
-         --tls-cert-file=/var/lib/kubernetes/kubernetes.pem \
-         --tls-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \
-         --v=2
-        Restart=on-failure
-        RestartSec=5
-        [Install]
-        WantedBy=multi-user.target
-    - name: kube-controller-manager.service
-      enable: true
-      contents: |
-        [Unit]
-        Description=Kubernetes Controller Manager
-        Documentation=https://github.com/kubernetes/kubernetes
-        [Service]
-        ExecStart=/opt/bin/kube-controller-manager \
-          --address=0.0.0.0 \
-          --allocate-node-cidrs=true \
-          --cluster-cidr=10.200.0.0/16 \
-          --cluster-name=kubernetes \
-          --cluster-signing-cert-file=/var/lib/kubernetes/ca.pem \
-          --cluster-signing-key-file=/var/lib/kubernetes/ca-key.pem \
-          --kubeconfig=/var/lib/kubernetes/kube-controller-manager.kubeconfig \
-          --leader-elect=true \
-          --root-ca-file=/var/lib/kubernetes/ca.pem \
-          --service-account-private-key-file=/var/lib/kubernetes/service-account-key.pem \
-          --service-cluster-ip-range=10.32.0.0/24 \
-          --use-service-account-credentials=true \
-          --v=2
-        Restart=on-failure
-        RestartSec=5
-        [Install]
-        WantedBy=multi-user.target
-    - name: kube-scheduler.service
-      enable: true
-      contents: |
-        [Unit]
-        Description=Kubernetes Scheduler
-        Documentation=https://github.com/kubernetes/kubernetes
-        [Service]
-        ExecStart=/opt/bin/kube-scheduler \
-          --config=/var/lib/kubernetes/kube-scheduler-config.yaml \
-          --v=2
-        Restart=on-failure
-        RestartSec=5
-        [Install]
-        WantedBy=multi-user.target
     {{ end }}
-    - name: kube-router.service
-      enable: true
+    - name: virt-svc-mgr
       contents: |
         [Unit]
-        Description=Kubernetes Router
-        After=kube-apiserver.service
-        [Service]
-        ExecStart=/opt/bin/kube-router --kubeconfig=/var/lib/kubernetes/kube-router.kubeconfig --run-firewall=true --run-service-proxy=true --run-router=true
-        Restart=on-failure
-        [Install]
-        WantedBy=multi-user.target
-    - name: kubelet.service
-      enable: true
-      contents: |
-        [Unit]
-        Description=Kubernetes Kubelet
-        Documentation=https://github.com/kubernetes/kubernetes
-        After=docker.service
+        Description=Service Manager Habitat package
         Requires=docker.service
+        Requires=hab-sup.service
         [Service]
-        ExecStart=/opt/bin/kubelet \
-          --config=/var/lib/kubelet/kubelet-config.yaml \
-          --container-runtime=docker \
-          --image-pull-progress-deadline=2m \
-          --kubeconfig=/var/lib/kubelet/kubeconfig \
-          --network-plugin=cni \
-          --register-node=true \
-          --v=2
-        Restart=on-failure
-        RestartSec=5
-        [Install]
-        WantedBy=multi-user.target
+        ExecStartPre=/usr/bin/docker rm ncerny/virt-svc-mgr
+        ExecStart=/usr/bin/docker run \
+          --volume 
+          ncerny/virt-svc-mgr
 storage:
   files:
     - path: /etc/hostname
