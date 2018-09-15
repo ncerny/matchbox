@@ -1,0 +1,299 @@
+---
+systemd:
+  units:
+    - name: systemd-timesyncd.service
+      enable: true
+    - name: dnsupdate.service
+      enable: true
+      contents: |
+        [Service]
+        ExecStartPre=-/usr/bin/docker rm dnsupdate
+        ExecStart=/usr/bin/docker run --net=host \
+          --name dnsupdate \
+          ncerny/dnsupdate:latest \
+          --peer hab01.infra.cerny.cc \
+          --peer hab02.infra.cerny.cc \
+          --peer hab03.infra.cerny.cc \
+          --strategy at-once
+        ExecStop=/usr/bin/docker stop dnsupdate
+        [Unit]
+        Description=DNS Update Service
+        Requires=network-online.target
+        After=network-online.target
+        [Install]
+        WantedBy=multi-user.target
+    - name: ceph.target
+      enable: true
+      contents: |
+        [Unit]
+        Description=Ceph Object Storage
+        [Install]
+        WantedBy=multi-user.target
+    {{ if index . "controller" }}
+    - name: var-lib-docker.mount
+      enable: true
+      contents: |
+        [Unit]
+        Before=docker.service
+        [Mount]
+        What=/dev/vda
+        Where=/var/lib/docker
+        Type=xfs
+        [Install]
+        WantedBy=multi-user.target
+    - name: ceph-mon.service
+      enable: true
+      contents: |
+        [Service]
+        ExecStartPre=-/usr/bin/docker rm ceph-mon
+        ExecStart=/usr/bin/docker run --net=host \
+          -v ceph-etc:/etc/ceph \
+          -v ceph-var:/var/lib/ceph \
+          -e MON_IP={{.private_ipv4}} \
+          -e MON_NAME={{.hostname}} \
+          -e CEPH_PUBLIC_NETWORK=172.16.20.0/24 \
+          -e CEPH_CLUSTER_NETWORK=172.17.20.0/24 \
+          --name ceph-mon \
+          ceph/daemon mon
+        ExecStop=/usr/bin/docker stop ceph-mon
+        [Unit]
+        Description=Ceph Monitor Service
+        [Install]
+        WantedBy=ceph.target
+    - name: ceph-mgr.service
+      enable: true
+      contents: |
+        [Service]
+        ExecStartPre=-/usr/bin/docker rm ceph-mgr
+        ExecStart=/usr/bin/docker run --net=host \
+          -v ceph-etc:/etc/ceph \
+          -v ceph-var:/var/lib/ceph \
+          --name ceph-mgr \
+          ceph/daemon mgr
+        ExecStop=/usr/bin/docker stop ceph-mgr
+        [Unit]
+        Description=Ceph Manager Service
+        [Install]
+        WantedBy=ceph.target
+    - name: ceph-mds.service
+      enable: true
+      contents: |
+        [Service]
+        ExecStartPre=-/usr/bin/docker rm ceph-mds
+        ExecStart=/usr/bin/docker run --net=host \
+          -v ceph-etc:/etc/ceph \
+          -v ceph-var:/var/lib/ceph \
+          --name ceph-mds \
+          ceph/daemon mds
+        ExecStop=/usr/bin/docker stop ceph-mds  n
+        [Unit]
+        Description=Ceph Metadata Service
+        [Install]
+        WantedBy=ceph.target
+    {{else}}
+    - name: ceph-osd@.service
+      enable: true
+      contents: |
+        [Unit]
+          Description=Ceph OSD
+          After=docker.service
+          After=network-online.target
+          Requires=network-online.target
+        [Service]
+          ExecStartPre=-/usr/bin/docker rm ceph-osd-%i
+          ExecStart=/usr/bin/docker run --name ceph-osd-%i \
+            --net=host \
+            --privileged=true \
+            -e HOSTNAME={{.hostname}} \
+            -e OSD_DEVICE=/dev/%i \
+            -v /opt/ceph/etc:/etc/ceph \
+            -v /opt/ceph/var:/var/lib/ceph \
+            -v /dev:/dev \
+            ceph/daemon osd_ceph_volume_activate
+          ExecStopPost=-/usr/bin/docker stop ceph-osd-%i
+          Restart=always
+          RestartSec=60s
+          TimeoutStartSec=600
+          TimeoutStopSec=120
+        [Install]
+          WantedBy=ceph.target
+    {{end}}
+storage:
+  files:
+    - path: /etc/hostname
+      filesystem: root
+      mode: 0644
+      contents:
+        inline:
+          {{.hostname}}
+    - path: /etc/modules-load.d/rbd.conf
+      filesystem: root
+      mode: 0644
+      contents:
+        inline: rbd
+    {{ if index . "controller" }}
+    - path: /opt/bin/ceph
+      filesystem: root
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          /usr/bin/docker run --rm --net=host -v ceph-etc:/etc/ceph -v ceph-var:/var/lib/ceph ceph/daemon-base ceph "$@"
+    - path: /opt/bin/rados
+      filesystem: root
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          /usr/bin/docker run --rm --net=host -v ceph-etc:/etc/ceph -v ceph-var:/var/lib/ceph ceph/daemon-base rados "$@"
+    - path: /opt/bin/rbd
+      filesystem: root
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          /usr/bin/docker run --rm --net=host -v ceph-etc:/etc/ceph -v ceph-var:/var/lib/ceph ceph/daemon-base rbd "$@"
+    {{else}}
+    - path: /opt/ceph/etc/ceph.conf
+      filesystem: root
+      mode: 0644
+      contents:
+        inline: |
+          [global]
+            fsid = 1f2c41cb-9969-4f21-851f-cdcf2f6e8ca8
+            mon initial members = ceph01.infra.cerny.cc, ceph02.infra.cerny.cc, ceph03.infra.cerny.cc
+            mon host = 172.16.20.40:6789, 172.16.20.41:6789, 172.16.20.42:6789
+            mon osd min down reporters = 6
+            public network = 172.16.20.0/24
+            cluster network = 172.17.20.0/24
+            auth cluster required = cephx
+            auth service required = cephx
+            auth client required = cephx
+            osd pool default size = 3
+            osd pool default min size = 2
+    - path: /opt/ceph/var/bootstrap-osd/ceph.keyring
+      filesystem: root
+      mode: 0644
+      contents:
+        inline: |
+          [client.bootstrap-osd]
+            key = AQAfNnZbmL5XFhAA1f0aCV7COIMMJplxU+F2xA==
+            caps mon = "allow profile bootstrap-osd"
+    - path: /opt/bin/ceph-volume
+      filesystem: root
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          /usr/bin/docker run --rm \
+            --net=host --privileged=true \
+            -v /dev:/dev \
+            -v /opt/ceph/var:/var/lib/ceph \
+            -v /opt/ceph/etc:/etc/ceph \
+            ceph/daemon-base ceph-volume "$@"
+    - path: /etc/udev/rules.d/10-ceph-osd.rules
+      filesystem: root
+      mode: 0644
+      contents:
+        inline: |
+          SUBSYSTEM=="block", ACTION=="add", KERNEL=="sd*[!0-9]", ATTRS{vendor}=="ATA*", TAG+="systemd", ENV{SYSTEMD_WANTS}="ceph-osd@%k.service"
+          SUBSYSTEM=="block", ACTION=="add", KERNEL=="nvme0n1", TAG+="systemd", ENV{SYSTEMD_WANTS}="ceph-osd@%k.service"
+    {{end}}
+docker:
+  flags:
+    - --iptables=false
+networkd:
+  units:
+    {{ if index . "controller" }}
+    - name: 20-eth0.network
+      contents: |
+        [Match]
+        Name=eth0
+        [Network]
+        DHCP=ipv6
+        Address={{.public_ipv4}}/24
+        Gateway=192.168.20.1
+        DNS=192.168.20.252
+        DNS=192.168.20.253
+        DNS=192.168.20.254
+    - name: 20-eth1.network
+      contents: |
+        [Match]
+        Name=eth1
+        [Network]
+        DHCP=false
+        Address={{.private_ipv4}}/24
+        [Link]
+        MTUBytes=9000
+    {{else}}
+    - name: 00-bond0-slaves.network
+      contents: |
+        [Match]
+        Driver=bnx2
+        Driver=igb
+        Driver=e1000*
+        [Network]
+        Bond=bond0
+    # - name: 00-bond1-slaves.network
+    #   contents: |
+    #     [Match]
+    #     Driver=mlx4*
+    #     Driver=ixgbe
+    #     [Network]
+    #     Bond=bond1
+    - name: 10-bond0.netdev
+      contents: |
+        [NetDev]
+        Name=bond0
+        Kind=bond
+        [Bond]
+        Mode=active-backup
+        MIIMonitorSec=.100
+    # - name: 10-bond1.netdev
+    #   contents: |
+    #     [NetDev]
+    #     Name=bond1
+    #     Kind=bond
+    #     [Bond]
+    #     Mode=active-backup
+    #     MIIMonitorSec=.100
+    - name: 20-bond0.network
+      contents: |
+        [Match]
+        Name=bond0
+        [Network]
+        DHCP=ipv6
+        Address={{.public_ipv4}}/24
+        Gateway=192.168.20.1
+        DNS=192.168.20.252
+        DNS=192.168.20.253
+        DNS=192.168.20.254
+    - name: 20-public.network
+      contents: |
+        [Match]
+        Name=enp*f0
+        [Network]
+        DHCP=false
+        Address={{.private_ipv4}}/24
+        [Link]
+        MTUBytes=9000
+    - name: 20-cluster.network
+      contents: |
+        [Match]
+        Name=enp*f1
+        [Network]
+        DHCP=false
+        Address={{.cluster_ipv4}}/24
+        [Link]
+        MTUBytes=9000
+    {{end}}
+
+passwd:
+  users:
+    {{ if index . "ssh_authorized_keys" }}
+    - name: core
+      ssh_authorized_keys:
+        {{ range $element := .ssh_authorized_keys }}
+        - {{$element}}
+        {{end}}
+    {{end}}

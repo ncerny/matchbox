@@ -1,17 +1,16 @@
 {
-  "id": "default",
-  "name": "default",
+  "id": "docker",
+  "name": "docker",
   "boot": {
     "kernel": "http://stable.release.core-os.net/amd64-usr/current/coreos_production_pxe.vmlinuz",
     "initrd": ["http://stable.release.core-os.net/amd64-usr/current/coreos_production_pxe_image.cpio.gz"],
     "args": [
       "initrd=coreos_production_pxe_image.cpio.gz",
-      "coreos.config.url=http://infra.home.cerny.cc:9080/ignition?uuid=${uuid}&mac=${mac:hexhyp}&domain=${domain}&hostname=${hostname}&serial=${serial}",
+      "coreos.config.url=http://matchbox/ignition?uuid=${uuid}&mac=${mac:hexhyp}",
       "coreos.first_boot=yes",
       "console=tty0",
-      "console=ttyS0",
-      "coreos.autologin"
+      "console=ttyS0"
     ]
   },
-  "ignition_id": "default.yaml"
+  "ignition_id": "docker.yaml"
 }

@@ -1,0 +1,67 @@
+---
+systemd:
+  units:
+    - name: dnsupdate.service
+      enable: true
+      contents: |
+        [Service]
+        ExecStartPre=-/usr/bin/docker rm dnsupdate
+        ExecStart=/usr/bin/docker run --net=host \
+          --name dnsupdate \
+          ncerny/dnsupdate:latest \
+          --peer hab01.infra.cerny.cc \
+          --peer hab02.infra.cerny.cc \
+          --peer hab03.infra.cerny.cc \
+          --strategy at-once
+        ExecStop=/usr/bin/docker stop dnsupdate
+        [Unit]
+        Description=DNS Update Service
+        Requires=network-online.target
+        After=network-online.target
+        [Install]
+        WantedBy=multi-user.target
+storage:
+  files:
+    - path: /etc/hostname
+      filesystem: root
+      mode: 0644
+      contents:
+        inline:
+          {{.hostname}}
+    - path: /etc/modules-load.d/rbd.conf
+      filesystem: root
+      mode: 0644
+      contents:
+        inline: rbd
+networkd:
+  units:
+    - name: 20-eth0.network
+      contents: |
+        [Match]
+        Name=eth0
+        [Network]
+        DHCP=ipv6
+        Address={{.public_ipv4}}/24
+        Gateway=192.168.20.1
+        DNS=192.168.20.2
+        DNS=192.168.20.3
+        DNS=192.168.20.4
+    {{ if index . "private_ipv4" }}
+    - name: 20-eth1.network
+      contents: |
+        [Match]
+        Name=eth1
+        [Network]
+        DHCP=false
+        Address={{.private_ipv4}}/24
+    {{end}}
+
+passwd:
+  users:
+    {{ if index . "ssh_authorized_keys" }}
+    - name: core
+      ssh_authorized_keys:
+        {{ range $element := .ssh_authorized_keys }}
+        - {{$element}}
+        {{end}}
+    {{end}}
