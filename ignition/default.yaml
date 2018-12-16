@@ -1,0 +1,418 @@
+---
+systemd:
+    units:
+      - name: systemd-timesyncd.service
+        enable: true
+      - name: locksmithd.service
+        mask: true
+      - name: update-engine.service
+        enable: true
+      - name: docker.service
+        enable: true
+      - name: setup.service
+        enable: true
+        contents: |
+          [Unit]
+          Requires=network-online.target
+          After=network-online.target
+          [Service]
+          Environment="PATH=$PATH:/opt/bin:/usr/bin:/bin:/usr/sbin"
+          ExecStart=/usr/bin/sh -c 'sleep 20 && /opt/bin/setup.sh'
+          Restart=on-failure
+          [Install]
+          WantedBy=multi-user.target
+storage:
+  directories:
+    - path: /etc/kubernetes/manifests
+      filesystem: root
+      mode: 0700
+  files:
+    - path: /etc/hostname
+      filesystem: root
+      mode: 0644
+      contents:
+        inline:
+          k8s-{{.request.query.role}}-{{.request.query.mac}}
+    - path: /etc/default/kubelet
+      filesystem: root
+      mode: 0644
+      contents:
+        inline:
+          KUBELET_EXTRA_ARGS="--volume-plugin-dir=/var/lib/kubelet/volumeplugins"
+    - path: /opt/consul/services/kubernetes.json
+      filesystem: root
+      mode: 0600
+      contents:
+        inline: |
+          {
+            "service": {
+              "name": "kubernetes",
+              "address": "",
+              "port": 6443,
+              "enable_tag_override": false,
+              "checks": [
+                {
+                  "id": "kube-apiserver",
+                  "name": "Kubernetes API Server",
+                  "http": "https://localhost:6443/healthz",
+                  "tls_skip_verify": true,
+                  "method": "GET",
+                  "interval": "10s",
+                  "timeout": "1s"
+                }
+              ],
+              "weights": {
+                "passing": 3,
+                "warning": 1
+              }
+            }
+          }
+    - path: /opt/consul/services/matchbox.json
+      filesystem: root
+      mode: 0600
+      contents:
+        inline: |
+          {
+            "service": {
+              "name": "matchbox",
+              "address": "",
+              "port": 8080,
+              "enable_tag_override": false,
+              "checks": [
+                {
+                  "id": "api",
+                  "name": "Matchbox REST API",
+                  "http": "http://localhost:8080/",
+                  "method": "GET",
+                  "interval": "10s",
+                  "timeout": "1s"
+                }
+              ],
+              "weights": {
+                "passing": 3,
+                "warning": 1
+              }
+            }
+          }
+    - path: /opt/bin/setup-kubernetes.sh
+      filesystem: root
+      mode: 0700
+      contents:
+        inline: |
+          #!/bin/bash
+          # datacenter=union
+          # consul kv put -datacenter ${datacenter} versions/cni-plugins "v0.7.4"
+          # consul kv put -datacenter ${datacenter} versions/cri-tools "v1.13.0"
+          # consul kv put -datacenter ${datacenter} versions/kubernetes "v1.13.1"
+
+          role=$1
+          datacenter=$2
+          router=$(ip route show | awk '/default via / {print $3}')
+          while [[ -z "$CNI_VERSION" ]] || [[ -z "$CRICTL_VERSION" ]] || [[ -z "$KUBERNETES_VERSION" ]]; do
+            CNI_VERSION=$(/opt/bin/consul kv get -datacenter ${datacenter} versions/cni-plugins)
+            CRICTL_VERSION=$(/opt/bin/consul kv get -datacenter ${datacenter} versions/cri-tools)
+            KUBERNETES_VERSION=$(/opt/bin/consul kv get -datacenter ${datacenter} versions/kubernetes)
+          done
+
+          case "$datacenter" in
+            union)
+              channel="unstable"
+              ;;
+            rehearsal)
+              channel="stable"
+              ;;
+            delivered)
+              channel="delivered"
+              ;;
+            *)
+              channel="unstable"
+              ;;
+            esac
+          if [[ "$role" == "utility" ]]; then
+            cat <<EOF >/etc/systemd/system/matchbox.service
+          [Service]
+          ExecStartPre=-/usr/bin/docker rm matchbox
+          ExecStart=/usr/bin/docker run \\
+            --name matchbox \\
+            -p 8080:8080 \\
+            -p 8081:8081 \\
+            -v /opt/hab:/hab/svc \\
+            ncerny/matchbox \\
+            --strategy=at-once \\
+            --channel=${channel}
+          ExecStop=/usr/bin/docker stop matchbox
+          Restart=always
+          [Unit]
+          Description=Matchbox Ignition Provider
+          Requires=docker.service
+          After=docker.service
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+            systemctl daemon-reload
+            systemctl enable matchbox.service
+            systemctl start matchbox.service
+            cat <<EOF >/etc/systemd/system/dnsmasq.service
+          [Service]
+          ExecStartPre=-/usr/bin/docker rm dnsmasq
+          ExecStart=/usr/bin/docker run --net=host \\
+            --name dnsmasq \\
+            --cap-add=NET_ADMIN \\
+            quay.io/coreos/dnsmasq \\
+            -d -q \\
+            --no-poll \\
+            --no-resolv \\
+            --no-hosts \\
+            --local-service \\
+            --dhcp-range=${router},proxy,255.255.255.0 \\
+            --enable-tftp --tftp-root=/var/lib/tftpboot \\
+            --dhcp-userclass=set:ipxe,iPXE \\
+            --pxe-service=tag:#ipxe,x86PC,"PXE chainload to iPXE",undionly.kpxe \\
+            --pxe-service=tag:ipxe,x86PC,"iPXE",http://matchbox.service.${datacenter}.consul:8080/boot.ipxe \\
+            --server=/consul/127.0.0.1#8600 \\
+            --server=${router} \\
+            --log-dhcp
+          ExecStop=/usr/bin/docker stop dnsmasq
+          Restart=always
+          [Unit]
+          Description=Matchbox Ignition Provider
+          Requires=docker.service
+          After=docker.service
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+            systemctl daemon-reload
+            systemctl enable dnsmasq.service
+            systemctl start dnsmasq.service
+            exit 0
+          fi
+
+          mkdir -p /opt/cni/bin
+          curl --retry 10 --fail -L "https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-amd64-${CNI_VERSION}.tgz" | tar -C /opt/cni/bin -xz
+          curl --retry 10 --fail -L "https://github.com/kubernetes-incubator/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-linux-amd64.tar.gz" | tar -C /opt/bin -xz
+          curl --retry 10 --fail -L --remote-name-all https://storage.googleapis.com/kubernetes-release/release/${KUBERNETES_VERSION}/bin/linux/amd64/{kubeadm,kubelet,kubectl}
+          chmod +x {kubeadm,kubelet,kubectl}
+          mv {kubeadm,kubelet,kubectl} /opt/bin/
+          curl --retry 10 --fail -sSL "https://raw.githubusercontent.com/kubernetes/kubernetes/${KUBERNETES_VERSION}/build/debs/kubelet.service" | sed 's:/usr/bin:/opt/bin:g' > /etc/systemd/system/kubelet.service
+          mkdir -p /etc/systemd/system/kubelet.service.d
+          curl --retry 10 --fail -sSL "https://raw.githubusercontent.com/kubernetes/kubernetes/${KUBERNETES_VERSION}/build/debs/10-kubeadm.conf" | sed 's:/usr/bin:/opt/bin:g' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+          mkdir -p /var/lib/kubelet/volumeplugins
+          systemctl enable kubelet.service
+          systemctl start kubelet.service
+
+          if [[ "$role" == "master" ]]; then
+            /opt/bin/consul lock kubernetes-master /opt/bin/setup-kubernetes-master.sh ${KUBERNETES_VERSION} ${datacenter}
+          else
+            while [[ $(/usr/bin/curl -k https://kubernetes.service.${datacenter}.consul:6443/healthz 2>/dev/null) != "ok" ]]; do
+              echo "Master is currently not healthy.  Waiting for Master to become healthy."
+              sleep 10
+            done
+            /opt/bin/consul kv get kubernetes/bootstrap/key > provisioner && chmod 600 provisioner
+            ssh_opts="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i provisioner"
+            kubeadm_join=
+            while [[ -z "${kubeadm_join}" ]]; do
+              kubeadm_join=$(ssh $ssh_opts root@kubernetes.service.${datacenter}.consul -C '/opt/bin/kubeadm token create --print-join-command')
+              if [[ -z "${kubeadm_join}" ]]; then
+                echo "Error getting bootstrap token from master..." > 2
+                sleep 10
+              fi
+            done
+            /opt/bin/${kubeadm_join}
+            if [[ "${role}" == "storage" ]]; then
+              while [[ ! $(ssh $ssh_opts root@kubernetes.service.${datacenter}.consul -C "/opt/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf label node/$(hostname) node-role.kubernetes.io/storage=") ]]; do
+                sleep 30
+              done
+              while [[ ! $(ssh $ssh_opts root@kubernetes.service.${datacenter}.consul -C "/opt/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf taint node/$(hostname) storage=value:NoSchedule") ]]; do
+                sleep 30
+              done
+            fi
+            rm provisioner
+          fi
+    - path: /opt/bin/setup-kubernetes-master.sh
+      filesystem: root
+      mode: 0700
+      contents:
+        inline: |
+          #!/bin/bash
+          KUBERNETES_VERSION=$1
+          datacenter=$2
+          my_iface=$(ip route show | awk '/default via / {print $5}')
+          my_cidr=$(ip a show dev $my_iface primary scope global | awk '/inet / { print $2 }')
+          my_ip=${my_cidr%%/*}
+          my_hostname=$(hostname)
+          cluster="$(/opt/bin/consul kv get kubernetes/cluster)"
+          if [[ -z "$cluster" ]]; then
+            initial_cluster="${my_hostname}=https://${my_ip}:2380"
+            initial_cluster_state="new"
+            ssh-keygen -t rsa -N '' -f provisioner
+            mkdir -p /root/.ssh
+            cat provisioner.pub > /root/.ssh/authorized_keys
+            /opt/bin/consul kv put kubernetes/bootstrap/key "$(cat provisioner)"
+            /opt/bin/consul kv put kubernetes/bootstrap/key_pub "$(cat provisioner.pub)"
+          else
+            if [[ ${cluster} == *${my_hostname}=https://${my_ip}:2380* ]]; then
+              initial_cluster="${cluster}"
+            else
+              initial_cluster="${cluster},${my_hostname}=https://${my_ip}:2380"
+            fi
+            initial_cluster_state="existing"
+            mkdir -p /root/.ssh
+            /opt/bin/consul kv get kubernetes/bootstrap/key_pub > /root/.ssh/authorized_keys
+            /opt/bin/consul kv get kubernetes/bootstrap/key > provisioner && chmod 600 provisioner
+          fi
+          /opt/bin/consul kv put kubernetes/cluster "${initial_cluster}"
+
+          cat <<EOF > kubeadm-config.yaml
+          apiVersion: kubeadm.k8s.io/v1alpha2
+          kind: MasterConfiguration
+          kubernetesVersion: ${KUBERNETES_VERSION}
+          apiServerCertSANs:
+          - "kubernetes.service.${datacenter}.consul"
+          api:
+              controlPlaneEndpoint: "kubernetes.service.${datacenter}.consul:6443"
+          etcd:
+            local:
+              extraArgs:
+                listen-client-urls: https://127.0.0.1:2379,https://${my_ip}:2379
+                advertise-client-urls: https://${my_ip}:2379
+                listen-peer-urls: https://${my_ip}:2380
+                initial-advertise-peer-urls: https://${my_ip}:2380
+                initial-cluster: ${initial_cluster}
+                name: ${my_hostname}
+                initial-cluster-state: ${initial_cluster_state}
+              serverCertSANs:
+                - ${my_hostname}
+                - ${my_hostname}.${datacenter}.cerny.cc
+                - ${my_ip}
+              peerCertSANs:
+                - ${my_hostname}
+                - ${my_hostname}.${datacenter}.cerny.cc
+                - ${my_ip}
+          networking:
+              podSubnet: "10.244.0.0/16"
+          EOF
+
+          if [[ -z "$cluster" ]]; then
+            /opt/bin/kubeadm init --config kubeadm-config.yaml
+            while [[ $(/usr/bin/curl -k https://localhost:6443/healthz 2>/dev/null) != "ok" ]]; do
+              echo "API Server not yet healthy."
+              sleep 10
+            done
+          else
+            systemctl stop kubelet
+            mkdir -p /etc/kubernetes/pki/etcd
+            ssh_opts="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i provisioner root@kubernetes.service.${datacenter}.consul"
+            scp ${ssh_opts}:/etc/kubernetes/pki/ca.crt /etc/kubernetes/pki/ca.crt
+            scp ${ssh_opts}:/etc/kubernetes/pki/ca.key /etc/kubernetes/pki/ca.key
+            scp ${ssh_opts}:/etc/kubernetes/pki/sa.key /etc/kubernetes/pki/sa.key
+            scp ${ssh_opts}:/etc/kubernetes/pki/sa.pub /etc/kubernetes/pki/sa.pub
+            scp ${ssh_opts}:/etc/kubernetes/pki/front-proxy-ca.crt /etc/kubernetes/pki/front-proxy-ca.crt
+            scp ${ssh_opts}:/etc/kubernetes/pki/front-proxy-ca.key /etc/kubernetes/pki/front-proxy-ca.key
+            scp ${ssh_opts}:/etc/kubernetes/pki/etcd/ca.crt /etc/kubernetes/pki/etcd/ca.crt
+            scp ${ssh_opts}:/etc/kubernetes/pki/etcd/ca.key /etc/kubernetes/pki/etcd/ca.key
+            scp ${ssh_opts}:/etc/kubernetes/admin.conf /etc/kubernetes/admin.conf
+
+            /opt/bin/kubeadm alpha phase certs all --config kubeadm-config.yaml
+            /opt/bin/kubeadm alpha phase kubelet config write-to-disk --config kubeadm-config.yaml
+            /opt/bin/kubeadm alpha phase kubelet write-env-file --config kubeadm-config.yaml
+            /opt/bin/kubeadm alpha phase kubeconfig kubelet --config kubeadm-config.yaml
+            systemctl start kubelet
+            sleep 10
+            export KUBECONFIG=/etc/kubernetes/admin.conf
+            while [[ ! $(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null | jq -e .Nodes[0].Node.Node) ]] &&
+                  [[ ! $(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null| jq -e .Nodes[0].Node.Address) ]]; do
+              echo "No healthy master nodes!"
+              sleep 10
+            done
+            master_name=$(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null | jq -r .Nodes[0].Node.Node)
+            master_ip=$(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null| jq -r .Nodes[0].Node.Address)
+            id=$(/opt/bin/kubectl exec -n kube-system etcd-${master_name} -- etcdctl --ca-file /etc/kubernetes/pki/etcd/ca.crt --cert-file /etc/kubernetes/pki/etcd/peer.crt --key-file /etc/kubernetes/pki/etcd/peer.key --endpoints=https://${master_ip}:2379 member list | awk -F: "/${my_hostname}/ { print \$1 }")
+            if [[ -n "$id" ]]; then
+              /opt/bin/kubectl exec -n kube-system etcd-${master_name} -- etcdctl --ca-file /etc/kubernetes/pki/etcd/ca.crt --cert-file /etc/kubernetes/pki/etcd/peer.crt --key-file /etc/kubernetes/pki/etcd/peer.key --endpoints=https://${master_ip}:2379 member remove $id
+            fi
+            while [[ ! $(/opt/bin/kubectl exec -n kube-system etcd-${master_name} -- etcdctl --ca-file /etc/kubernetes/pki/etcd/ca.crt --cert-file /etc/kubernetes/pki/etcd/peer.crt --key-file /etc/kubernetes/pki/etcd/peer.key --endpoints=https://${master_ip}:2379 member add ${my_hostname} https://${my_ip}:2380) ]]; do
+              echo "Failed to add ETCD node to existing cluster."
+              sleep 10
+            done
+            /opt/bin/kubeadm alpha phase etcd local --config kubeadm-config.yaml
+            /opt/bin/kubeadm alpha phase kubeconfig all --config kubeadm-config.yaml
+            /opt/bin/kubeadm alpha phase controlplane all --config kubeadm-config.yaml
+            /opt/bin/kubeadm alpha phase mark-master --config kubeadm-config.yaml
+
+            while [[ $(/usr/bin/curl -k https://localhost:6443/healthz 2>/dev/null) != "ok" ]]; do
+              echo "API Server not yet healthy."
+              sleep 10
+            done
+          fi
+          mkdir /home/core/.kube
+          cp -i /etc/kubernetes/admin.conf /home/core/.kube/config
+          chown $(id -u core):$(id -g core) -R /home/core/.kube
+          rm provisioner
+    - path: /opt/bin/setup.sh
+      filesystem: root
+      mode: 0700
+      contents:
+        inline: |
+          #!/bin/bash
+          domain="{{.request.query.domain}}"
+          role="{{.request.query.role}}"
+          datacenter=${domain%%.*}
+          CONSUL_VERSION=1.2.3
+
+          echo 127.0.1.1  $(hostname).${domain} $(hostname) >> /etc/hosts
+
+          mkdir -p /var/lib/consul
+          mkdir -p /etc/consul.d
+          curl --retry 10 --fail https://releases.hashicorp.com/consul/1.2.3/consul_1.2.3_linux_amd64.zip | gunzip - > /opt/bin/consul
+          chmod +x /opt/bin/consul
+
+          args="-retry-join=consul.service.${datacenter}.consul"
+
+          if [[ "$role" == "utility" ]]; then
+            args="-server -ui -bootstrap-expect=3 -client=0.0.0.0 -join-wan=consul.service.management.consul"
+            cp /opt/consul/services/matchbox.json /etc/consul.d/
+          elif [[ "$role" == "master" ]]; then
+            cp /opt/consul/services/kubernetes.json /etc/consul.d/
+          fi
+          cat <<EOF >/etc/systemd/system/consul.service
+          [Service]
+          ExecStart=/opt/bin/consul agent $args \\
+            -data-dir=/var/lib/consul \\
+            -enable-script-checks=true \\
+            -config-dir=/etc/consul.d \\
+            -retry-join=consul.service.consul \\
+            -enable-script-checks=true \\
+            -datacenter=${datacenter} \\
+            -bind='{{`{{ GetInterfaceIP "eth0" }}`}}'
+          Restart=always
+          [Unit]
+          Description=Consul Agent
+          Requires=network-online.target
+          After=network-online.target
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          systemctl daemon-reload
+          systemctl enable consul.service
+          systemctl start consul.service
+
+          /opt/bin/setup-kubernetes.sh $role $datacenter
+
+          systemctl disable setup.service
+networkd:
+  units:
+    - name: 20-eth0.network
+      contents: |
+        [Match]
+        Name=eth0
+        [Network]
+        DHCP=true
+passwd:
+  users:
+    {{ if index . "ssh_authorized_keys" }}
+    - name: core
+      ssh_authorized_keys:
+        {{ range $element := .ssh_authorized_keys }}
+        - {{$element}}
+        {{end}}
+    {{end}}

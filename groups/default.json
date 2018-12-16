@@ -1,10 +1,10 @@
 {
-  "id": "docker",
-  "name": "Generic Docker Node",
-  "selector":{
+  "id": "default",
+  "name": "CoreOS Kubernetes Node",
+  "selector": {
     "os": "installed"
   },
-  "profile": "docker",
+  "profile": "default",
   "metadata": {
     "ssh_authorized_keys": [
       "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC8U3NdHJtjLwA9/a7iVEhd01xgR+8tSUqu1X68uQx5u7XWIpENYK2ksHBu6eYQHUdoH/otgJ2XnzrZcfTP83dUNN9KFxuYOmiYHRtFJ1qDNs0miWLYC1nTpZTeYT4t1tosKWln1bZxX76sxG95QSlZNaAEYRkam0+3G+6jHiZBtJcfYwqa0mny7LekWGypfynNbKwL5Vq0lHH5eA6VvP/I/Ev7LPTvmoiK7QQZXbHjOckdQGOAqJP6KBoDFUEmxeGGy7RCzjYpom43P5S/mxK5TRVMekDuEi55/78wheHfXMfsJe73q6gH4wIy2QLiS5YHk0/7jJHosNC7wIUYHhK5",

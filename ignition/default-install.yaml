@@ -20,7 +20,18 @@ storage:
       contents:
         inline: |
           #!/bin/bash -ex
-          curl --retry 10 --fail "{{.ignition_endpoint}}?{{.request.raw_query}}&os=installed" -o ignition.json
+          domain="{{.request.query.domain}}"
+          datacenter=${domain%%.*}
+          if [[ -b /dev/vdb ]]; then
+            role=storage
+          elif [[ $(grep processor /proc/cpuinfo | wc -l) -eq 4 ]] && [[ $(awk '/MemTotal/ { print $2 }' /proc/meminfo) -ge 4000000 ]]; then
+            role=master
+          elif [[ $(grep processor /proc/cpuinfo | wc -l) -eq 16 ]] && [[ $(awk '/MemTotal/ { print $2 }' /proc/meminfo) -ge 16000000 ]]; then
+            role=compute
+          else
+            role=utility
+          fi
+          curl --retry 10 --fail "http://matchbox.service.consul:8080/ignition?{{.request.raw_query}}&os=installed&role=${role}" -o ignition.json
           coreos-install -d /dev/vda -C {{.coreos_channel}} -i ignition.json {{if index . "baseurl"}}-b {{.baseurl}}{{end}}
           udevadm settle
           systemctl reboot

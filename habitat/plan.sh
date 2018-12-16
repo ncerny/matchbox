@@ -6,14 +6,14 @@ pkg_license=("Apache-2.0")
 pkg_source="https://github.com/coreos/matchbox/releases/download/v${pkg_version}/${pkg_name}-v${pkg_version}-linux-amd64.tar.gz"
 pkg_shasum="aaf96b45f4f4886defce9eeefcfaec6ad31878ac0a9061b72390368d55fdba16"
 pkg_dirname=${pkg_name}-v${pkg_version}-linux-amd64
-pkg_deps=(core/glibc core/curl core/grep)
+pkg_deps=(core/glibc core/curl core/grep core/bash)
 # pkg_build_deps=(core/make core/gcc)
 pkg_bin_dirs=(bin)
 pkg_exports=(
   [port]=port
-  [grpc]=grpc
+  [grpc-port]=grpc.port
 )
-pkg_exposes=(port grpc)
+pkg_exposes=(port grpc-port)
 # pkg_binds=(
 #   [database]="port host"
 # )

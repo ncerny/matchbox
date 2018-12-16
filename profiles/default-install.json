@@ -1,16 +1,17 @@
 {
-  "id": "ceph",
-  "name": "ceph",
+  "id": "default-install",
+  "name": "Install CoreOS Container Linux and Reboot",
   "boot": {
     "kernel": "http://stable.release.core-os.net/amd64-usr/current/coreos_production_pxe.vmlinuz",
     "initrd": ["http://stable.release.core-os.net/amd64-usr/current/coreos_production_pxe_image.cpio.gz"],
     "args": [
       "initrd=coreos_production_pxe_image.cpio.gz",
-      "coreos.config.url=http://matchbox/ignition?uuid=${uuid}&mac=${mac:hexhyp}",
+      "coreos.config.url=http://matchbox.service.consul:8080/ignition?uuid=${uuid}&mac=${mac:hexhyp}&domain=${domain}",
       "coreos.first_boot=yes",
       "console=tty0",
-      "console=ttyS0"
+      "console=ttyS0",
+      "coreos.autologin"
     ]
   },
-  "ignition_id": "ceph.yaml"
+  "ignition_id": "default-install.yaml"
 }
