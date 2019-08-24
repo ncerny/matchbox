@@ -108,7 +108,7 @@ storage:
 
           export DOMAIN="{{.request.query.domain}}"
           export ROLE="{{.request.query.role}}"
-          export DATACENTER=${domain%%.*}
+          export DATACENTER=${DOMAIN%%.*}
 
           export my_iface=$(ip route show | awk '/default via / {print $5}')
           export my_cidr=$(ip a show dev $my_iface primary scope global | awk '/inet / { print $2 }')
@@ -119,17 +119,22 @@ storage:
             echo 127.0.1.1  $(hostname).${DOMAIN} $(hostname) >> /etc/hosts
             case ${ROLE} in
               utility)
+                mkdir -p /etc/consul.d
+                cp /opt/consul/services/matchbox.json /etc/consul.d/
                 install_consul "-server -ui -bootstrap-expect=3 -client=0.0.0.0 -join-wan=consul.service.management.consul"
                 install_dnsmasq
                 install_matchbox
                 ;;
               master)
+                mkdir -p /etc/consul.d
+                cp /opt/consul/services/kubernetes.json /etc/consul.d/
                 install_consul
                 install_kubernetes
-                if [[ -z "$(kv_get kubernetes/cluster)" ]]; then
-                  /opt/bin/consul lock kubernetes-master k8s_bootstrap
+                initial_cluster=$(/opt/bin/consul lock kubernetes-master /opt/bin/consul kv get -datacenter ${DATACENTER} kubernetes/cluster)
+                if [[ -z "$initial_cluster" ]]; then
+                  k8s_bootstrap
                 else
-                  /opt/bin/consul lock kubernetes-master k8s_master
+                  k8s_master
                 fi
                 ;;
               *)
@@ -147,7 +152,7 @@ storage:
               echo "Both a key and a value should be specified for kv_put"
               return 1
             else
-              /opt/bin/consul kv put -datacenter ${DATACENTER} ${key} ${value}
+              /opt/bin/consul kv put -datacenter ${DATACENTER} ${key} "${value}"
             fi
           }
           kv_get() {
@@ -297,32 +302,29 @@ storage:
             systemctl start kubelet.service
           }
           k8s_bootstrap() {
-            initial_cluster="${my_hostname}=https://${my_ip}:2380"
-            initial_cluster_state="new"
             ssh-keygen -t rsa -N '' -f provisioner
             mkdir -p /root/.ssh
             cat provisioner.pub > /root/.ssh/authorized_keys
             kv_put kubernetes/bootstrap/key "$(cat provisioner)"
             kv_put kubernetes/bootstrap/key_pub "$(cat provisioner.pub)"
-            kv_put kubernetes/cluster "${initial_cluster}"
-            k8s_master_config
+            cat <<EOF > kubeadm-config.yaml
+          apiVersion: kubeadm.k8s.io/v1beta1
+          kind: ClusterConfiguration
+          kubernetesVersion: ${KUBERNETES_VERSION}
+          apiServer:
+            certSANs:
+            - "kubernetes.service.${DATACENTER}.consul"
+          controlPlaneEndpoint: "kubernetes.service.${DATACENTER}.consul:6443"
+          EOF
             /opt/bin/kubeadm init --config kubeadm-config.yaml
             k8s_wait_api_server_health localhost
             k8s_setup_kubectl
             k8s_versions
           }
           k8s_master() {
-            initial_cluster=$(kv_get kubernetes/cluster)
-            if [[ ${initial_cluster} != *${my_hostname}=https://${my_ip}:2380* ]]; then
-              initial_cluster="${initial_cluster},${my_hostname}=https://${my_ip}:2380"
-            fi
-            initial_cluster_state="existing"
+            k8s_wait_api_server_health
             mkdir -p /root/.ssh
             kv_get kubernetes/bootstrap/key_pub > /root/.ssh/authorized_keys
-            kv_put kubernetes/cluster "${initial_cluster}"
-            k8s_master_config
-            systemctl stop kubelet
-            mkdir -p /etc/kubernetes/pki/etcd
             files=(
               /etc/kubernetes/pki/ca.crt
               /etc/kubernetes/pki/ca.key
@@ -335,50 +337,19 @@ storage:
               /etc/kubernetes/admin.conf
             )
             rcp ${files[@]}
-            id=$(etcd_exec member list | awk -F: "/${my_hostname}/ { print \$1 }")
-            if [[ -n "$id" ]]; then
-              etcd_exec member remove $id
-            fi
+            # id=$(etcd_exec member list | awk -F: "/${my_hostname}/ { print \$1 }")
+            # if [[ -n "$id" ]]; then
+            #   etcd_exec member remove $id
+            # fi
             k8s_join --experimental-control-plane
             k8s_wait_api_server_health localhost
-            k8k8s_setup_kubectl
+            k8s_setup_kubectl
             k8s_versions
           }
           k8s_member() {
             k8s_wait_api_server_health
             k8s_join
             if [[ "${ROLE}" == "storage" ]]; then k8s_tag storage; fi
-          }
-          k8s_master_config() {
-            cat <<EOF > kubeadm-config.yaml
-          apiVersion: kubeadm.k8s.io/v1alpha2
-          kind: MasterConfiguration
-          kubernetesVersion: ${KUBERNETES_VERSION}
-          apiServerCertSANs:
-          - "kubernetes.service.${DATACENTER}.consul"
-          api:
-              controlPlaneEndpoint: "kubernetes.service.${DATACENTER}.consul:6443"
-          etcd:
-            local:
-              extraArgs:
-                listen-client-urls: https://127.0.0.1:2379,https://${my_ip}:2379
-                advertise-client-urls: https://${my_ip}:2379
-                listen-peer-urls: https://${my_ip}:2380
-                initial-advertise-peer-urls: https://${my_ip}:2380
-                initial-cluster: ${initial_cluster}
-                name: ${my_hostname}
-                initial-cluster-state: ${initial_cluster_state}
-              serverCertSANs:
-                - ${my_hostname}
-                - ${my_hostname}.${DATACENTER}.cerny.cc
-                - ${my_ip}
-              peerCertSANs:
-                - ${my_hostname}
-                - ${my_hostname}.${DATACENTER}.cerny.cc
-                - ${my_ip}
-          networking:
-              podSubnet: "10.244.0.0/16"
-          EOF
           }
           k8s_wait_api_server_health() {
             if [[ -z "$1" ]]; then
@@ -391,20 +362,20 @@ storage:
               sleep 10
             done
           }
-          k8s_wait_master_health() {
-            while [[ ! $(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null | jq -e .Nodes[0].Node.Node) ]] &&
-                  [[ ! $(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null| jq -e .Nodes[0].Node.Address) ]]; do
-              echo "No healthy master nodes!"
-              sleep 10
-            done
-          }
-          etcd_exec() {
-            export KUBECONFIG=/etc/kubernetes/admin.conf
-            k8s_wait_master_health
-            master_name=$(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null | jq -r .Nodes[0].Node.Node)
-            master_ip=$(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null| jq -r .Nodes[0].Node.Address)
-            /opt/bin/kubectl exec -n kube-system etcd-${master_name} -- etcdctl --ca-file /etc/kubernetes/pki/etcd/ca.crt --cert-file /etc/kubernetes/pki/etcd/peer.crt --key-file /etc/kubernetes/pki/etcd/peer.key --endpoints=https://${master_ip}:2379 $@
-          }
+          # k8s_wait_master_health() {
+          #   while [[ ! $(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null | jq -e .Nodes[0].Node.Node) ]] &&
+          #         [[ ! $(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null| jq -e .Nodes[0].Node.Address) ]]; do
+          #     echo "No healthy master nodes!"
+          #     sleep 10
+          #   done
+          # }
+          # etcd_exec() {
+          #   export KUBECONFIG=/etc/kubernetes/admin.conf
+          #   k8s_wait_master_health
+          #   master_name=$(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null | jq -r .Nodes[0].Node.Node)
+          #   master_ip=$(/usr/bin/curl http://127.0.0.1:8500/v1/query/kubernetes/execute 2>/dev/null| jq -r .Nodes[0].Node.Address)
+          #   /opt/bin/kubectl exec -n kube-system etcd-${master_name} -- etcdctl --ca-file /etc/kubernetes/pki/etcd/ca.crt --cert-file /etc/kubernetes/pki/etcd/peer.crt --key-file /etc/kubernetes/pki/etcd/peer.key --endpoints=https://${master_ip}:2379 $@
+          # }
           k8s_join() {
             kubeadm_join=
             while [[ -z "${kubeadm_join}" ]]; do
